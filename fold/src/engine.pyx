@@ -3,8 +3,18 @@
 
 import random
 
+# from libcpp cimport bool
+
+from libc cimport bool as bool_t
+
 ctypedef enum Direction:
     UP,DOWN,RIGHT,LEFT
+
+# cpdef enum Direction:
+#     UP,DOWN,RIGHT,LEFT  
+
+class InvalidPositionException(Exception):
+    pass
 
 cdef class Position:
     cdef public int x
@@ -12,6 +22,8 @@ cdef class Position:
     def __init__(self, int x, int y):
         self.x = x
         self.y = y
+
+        assert isinstance(self.x, int) and isinstance(self.y, int), InvalidPositionException("Wrong position")
 
     def compute_direction(self, Direction direction):
         if direction == Direction.UP:
@@ -29,6 +41,9 @@ cdef class Position:
         return self.__class__.__name__ + ": " + self.__repr__()
 
 
+
+
+
 cdef class Neighbors:
     """Bi-Directional data-structure for storing nodes and their respective positions"""
     cdef dict neighbors
@@ -39,7 +54,6 @@ cdef class Neighbors:
     
     def is_neighbor(self, Node node):
         """Find out if a neighbor is here"""
-        print("Nod")
         return node in self.neighbors_inverted.keys()
     
     def is_neighbor_position(self, Position position):
@@ -65,6 +79,9 @@ cdef class Neighbors:
         Retrieve a list of all available neighbors
         """
         return self.neighbors.values()
+
+    def get_neighbors_positions(self):
+        return self.neighbors.keys()
 
     def update(self):
         """Updates the map structure"""
@@ -93,10 +110,14 @@ cdef class Node:
     cdef Neighbors neighbors
     cdef object data
 
+    cdef int priority
+
     def __init__(self, Position position, data=None):
         self.position = position
         self.neighbors = Neighbors()
         self.data = data
+
+        self.priority = 0
 
     def __repr__(self):
         return str(self.position )#f"{self.position}:{self.neighbors}:{self.data}"
@@ -105,6 +126,12 @@ cdef class Node:
 
     def get_position(self):
         return self.position
+
+    def get_data(self):
+        return self.data
+
+    def set_data(self, key):
+        self.data = key
 
     def connect(self, Node node):
         if not self.neighbors.is_neighbor(node):
@@ -135,6 +162,8 @@ cdef class Node:
     def get_nearby(self):
         return self.neighbors.get_neighbors()
 
+    def get_valid_directions(self):
+        return self.neighbors.get_neighbors_positions()
 
 
 
@@ -170,7 +199,24 @@ cdef find_nearby(node):
 
     return generate_layers()
 
-        
+cdef dict _create_map(Node node, int n_layers):
+    cdef int i = 0
+
+    cdef set visited = set()
+
+    cdef dict grid = {}
+
+    for layer in find_nearby(node):
+        if i > n_layers:
+            break
+        for node in layer:
+            position = node.get_position()
+            if position not in visited:
+                grid[position] = node.get_data()
+                visited.add(position)
+        i += 1
+
+    return grid
 
 
 def connect_nodes(Node node1, Node node2):
@@ -184,19 +230,44 @@ def create_node(int x, int y):
     return Node(Position(x, y))
 
 cdef class _Engine:
+
     cdef Position position
     cdef Node node
-    def __init__(self, Position position = Position(0, 0)):
+
+    cdef list possible_positions # = []
+    cdef list possible_directions# = []
+
+    cdef object can_modify
+
+    cdef int render_distance
+
+    def __init__(self, render_distance, Position position = Position(0, 0), can_modify = True):
+        
+        self.render_distance = render_distance
+        
         self.node = create_node(0, 0)
         self.position = position
+        self.can_modify = can_modify
+
+        self.possible_directions = []
+        self.possible_positions = []
 
     def get_position(self):
         return self.position
 
     def traverse(self, Direction direction):
+
+        new_pos = self.node.get_position().compute_direction(direction)
+
+        if self.node.can_traverse(direction):
+            self.node = self.node.get_nearby
         print("Traversed")
         print(direction)
-    
+
+    def find_valid_directions(self):
+        return self.node.get_valid_directions()
+        
+
     def _find(self, Node target):
         for layer in find_nearby(self.node):
             for node in layer:
@@ -213,14 +284,42 @@ cdef class _Engine:
         return None
 
 
-    
+
+
+def create_map(node, n):
+    return _create_map(node, n)
+
+def load_map_from_array(list arr, object ignore=None, inverted_y=True):
+    """Convert a 2D map to a network
+    You may use inverted_y to mimic the way a 2D array is structured compared to 
+    the normal coordinate system
+    """
+    network = []
+
+    max_x = len(arr)
+    max_y = len(arr[0])
+
+    for x in range(max_x):
+        for y in range(max_y):
+            if inverted_y:
+                item = arr[x][(max_y - 1) - y]
+            else:
+                item = arr[x][y]
+
+            if item != ignore:
+                node = Node(Position(x, y), item)
+                network.append(node)
+
+    return network
+
+
+
  
 cdef class GGDBEngine(_Engine):
     """Grid graph database engine front-end"""
 
-    def __init__(self):
-        super().__init__()
-        print(self.get_position())
+    def __init__(self, int render_distance):
+        super().__init__(render_distance)
 
     def test(self, Node node):
         self.node = node
@@ -242,10 +341,10 @@ cdef class GGDBEngine(_Engine):
             i+=1
 
     def get(self):
-        return self.node
+        return self.node.get_data()
 
     def put(self, key):
-        pass
+        self.node.set_data(key)
 
     def up(self):
         self.traverse(Direction.UP)
@@ -258,5 +357,16 @@ cdef class GGDBEngine(_Engine):
 
     def right(self):
         self.traverse(Direction.RIGHT)
+
+    def get_possible(self) -> list[Position]:
+        return list(self.find_valid_directions())
+
+    def set_render_distance(self, int value):
+        assert isinstance(value, int), "Value must be of integer type"
+        assert 0 <= value, "Value must be a positive integer"
+        self.render_distance = value
+
+    def get_render_distance(self):
+        return int(self.render_distance)
 
     
